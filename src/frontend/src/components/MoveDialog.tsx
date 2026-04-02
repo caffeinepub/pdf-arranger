@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface MoveDialogProps {
   open: boolean;
@@ -34,6 +34,14 @@ export default function MoveDialog({
 }: MoveDialogProps) {
   const [targetFileId, setTargetFileId] = useState<string>("");
   const [targetPosition, setTargetPosition] = useState<string>("");
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (open) {
+      setTargetFileId("");
+      setTargetPosition("");
+    }
+  }, [open]);
 
   // Derive selected page summary
   const selectionSummary = (() => {
@@ -75,13 +83,9 @@ export default function MoveDialog({
   function handleMove() {
     if (!targetFileId || targetPosition === "") return;
     onMove(Number(targetFileId), Number(targetPosition));
-    setTargetFileId("");
-    setTargetPosition("");
   }
 
   function handleClose() {
-    setTargetFileId("");
-    setTargetPosition("");
     onClose();
   }
 
@@ -94,8 +98,32 @@ export default function MoveDialog({
   const canMove = targetFileId !== "" && targetPosition !== "";
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
-      <DialogContent className="sm:max-w-md">
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        // Only handle explicit close (not triggered by inner popovers/selects)
+        if (!isOpen) {
+          handleClose();
+        }
+      }}
+    >
+      <DialogContent
+        className="sm:max-w-md"
+        onInteractOutside={(e) => {
+          // Prevent closing when interacting with Select dropdowns (they use portals)
+          // Check if the click target is inside a Radix select content
+          const target = e.target as HTMLElement;
+          if (
+            target.closest("[data-radix-select-viewport]") ||
+            target.closest("[data-radix-popper-content-wrapper]") ||
+            target.closest("[role='listbox']") ||
+            target.closest("[role='option']") ||
+            target.closest("[data-radix-collection-item]")
+          ) {
+            e.preventDefault();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Move Pages</DialogTitle>
         </DialogHeader>
@@ -116,7 +144,10 @@ export default function MoveDialog({
               <SelectTrigger id="target-file">
                 <SelectValue placeholder="Select a PDF file..." />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                // Render inside the dialog to avoid portal focus conflicts
+                position="popper"
+              >
                 {filesData.map((f) => (
                   <SelectItem key={f.id} value={String(f.id)}>
                     {f.file.name}
@@ -141,7 +172,7 @@ export default function MoveDialog({
                   }
                 />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper">
                 {positionOptions.map((opt) => (
                   <SelectItem key={opt.value} value={String(opt.value)}>
                     {opt.label}
