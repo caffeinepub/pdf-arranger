@@ -8,6 +8,12 @@ import { FileText, Heart } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+// Virtual page source — used for duplicated pages and cross-file moved pages
+export interface VirtualPageSource {
+  sourceFileId: number;
+  originalPageNum: number;
+}
+
 export interface FileData {
   id: number;
   file: File;
@@ -16,6 +22,9 @@ export interface FileData {
   rotations: number[];
   removePages: number[];
   thumbnails: (string | null)[];
+  // Maps virtual page numbers (> pageCount or cross-file) to their real origin.
+  // Pages NOT in this map are native pages of this file (pageNum = PDF 1-based index).
+  virtualPageMap: Record<number, VirtualPageSource>;
 }
 
 export interface SelectedPage {
@@ -24,6 +33,12 @@ export interface SelectedPage {
 }
 
 type ThumbSize = "sm" | "md" | "lg";
+
+// Global counter for unique virtual page IDs across all files
+let virtualPageCounter = 100000;
+function nextVirtualPageId(): number {
+  return ++virtualPageCounter;
+}
 
 // Initialize pdf.js worker
 function initPdfJsWorker() {
@@ -118,6 +133,7 @@ export default function App() {
         rotations: [...f.rotations],
         removePages: [...f.removePages],
         thumbnails: [...f.thumbnails],
+        virtualPageMap: { ...f.virtualPageMap },
       })),
     ];
   });
@@ -202,19 +218,41 @@ export default function App() {
     return () => window.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  /**
+   * Resolve the real (sourceFileId, originalPageNum) for any page slot in a file.
+   * Native pages resolve to themselves; virtual pages look up the map.
+   */
+  function resolvePageOrigin(
+    file: FileData,
+    pageNum: number,
+  ): { sourceFileId: number; originalPageNum: number } {
+    const mapped = file.virtualPageMap[pageNum];
+    if (mapped) return mapped;
+    // Native page — belongs to this file
+    return { sourceFileId: file.id, originalPageNum: pageNum };
+  }
+
   async function renderAllThumbnails(fileData: FileData) {
-    const promises = fileData.pageOrder.map(async (pageNum) => {
+    const promises = fileData.pageOrder.map(async (pageNum, posIdx) => {
       try {
+        // Resolve the real source to render from
+        const origin = resolvePageOrigin(fileData, pageNum);
+        const sourceFile = filesDataRef.current.find(
+          (f) => f.id === origin.sourceFileId,
+        );
+        // For initial load, source file is the same file being loaded
+        const fileToRender = sourceFile?.file ?? fileData.file;
         const dataUrl = await renderPageThumbnail(
-          fileData.file,
-          pageNum,
-          fileData.rotations[pageNum - 1] || 0,
+          fileToRender,
+          origin.originalPageNum,
+          fileData.rotations[posIdx] || 0,
         );
         setFilesData((prev) =>
           prev.map((f) => {
             if (f.id !== fileData.id) return f;
             const newThumbs = [...f.thumbnails];
-            newThumbs[pageNum - 1] = dataUrl;
+            const currentIdx = f.pageOrder.indexOf(pageNum);
+            if (currentIdx !== -1) newThumbs[currentIdx] = dataUrl;
             return { ...f, thumbnails: newThumbs };
           }),
         );
@@ -244,6 +282,7 @@ export default function App() {
           rotations: new Array(pageCount).fill(0),
           removePages: [],
           thumbnails: new Array(pageCount).fill(null),
+          virtualPageMap: {},
         };
         newEntries.push(entry);
       } catch {
@@ -374,7 +413,15 @@ export default function App() {
           const posIdx = file.pageOrder.indexOf(pageNum);
           if (posIdx === -1) continue;
           const rot = newRotations[posIdx];
-          renderPageThumbnail(file.file, pageNum, rot).then((dataUrl) => {
+          const origin = resolvePageOrigin(file, pageNum);
+          const sourceFile = filesDataRef.current.find(
+            (f) => f.id === origin.sourceFileId,
+          );
+          renderPageThumbnail(
+            sourceFile?.file ?? file.file,
+            origin.originalPageNum,
+            rot,
+          ).then((dataUrl) => {
             setFilesData((p) =>
               p.map((f) => {
                 if (f.id !== file.id) return f;
@@ -438,19 +485,25 @@ export default function App() {
         newRotations[posIdx] =
           ((newRotations[posIdx] || 0) + delta + 360) % 360;
         const updatedFile = { ...file, rotations: newRotations };
-        renderPageThumbnail(file.file, pageNum, newRotations[posIdx]).then(
-          (dataUrl) => {
-            setFilesData((p) =>
-              p.map((f) => {
-                if (f.id !== file.id) return f;
-                const thumbs = [...f.thumbnails];
-                const tPos = f.pageOrder.indexOf(pageNum);
-                if (tPos !== -1) thumbs[tPos] = dataUrl;
-                return { ...f, thumbnails: thumbs };
-              }),
-            );
-          },
+        const origin = resolvePageOrigin(file, pageNum);
+        const sourceFile = filesDataRef.current.find(
+          (f) => f.id === origin.sourceFileId,
         );
+        renderPageThumbnail(
+          sourceFile?.file ?? file.file,
+          origin.originalPageNum,
+          newRotations[posIdx],
+        ).then((dataUrl) => {
+          setFilesData((p) =>
+            p.map((f) => {
+              if (f.id !== file.id) return f;
+              const thumbs = [...f.thumbnails];
+              const tPos = f.pageOrder.indexOf(pageNum);
+              if (tPos !== -1) thumbs[tPos] = dataUrl;
+              return { ...f, thumbnails: thumbs };
+            }),
+          );
+        });
         return updatedFile;
       }),
     );
@@ -483,8 +536,14 @@ export default function App() {
         const newThumbnails = [...file.thumbnails];
         const posIdx = newPageOrder.indexOf(pageNum);
         if (posIdx === -1) return file;
-        // Insert a copy right after the original — use a virtual page number
-        const newPageNum = Math.max(...newPageOrder) + 1;
+        // Assign a globally unique virtual page ID
+        const newPageNum = nextVirtualPageId();
+        // The duplicated page renders from the same real source as the original
+        const origin = resolvePageOrigin(file, pageNum);
+        const newVirtualPageMap = {
+          ...file.virtualPageMap,
+          [newPageNum]: origin,
+        };
         newPageOrder.splice(posIdx + 1, 0, newPageNum);
         newRotations.splice(posIdx + 1, 0, newRotations[posIdx] || 0);
         newThumbnails.splice(posIdx + 1, 0, newThumbnails[posIdx] || null);
@@ -493,6 +552,7 @@ export default function App() {
           pageOrder: newPageOrder,
           rotations: newRotations,
           thumbnails: newThumbnails,
+          virtualPageMap: newVirtualPageMap,
         };
       }),
     );
@@ -503,8 +563,8 @@ export default function App() {
    * Move selected pages to a specific position within a target file.
    * targetPosition: 0 = beginning, N = after the Nth active (non-removed) page.
    *
-   * The dialog builds positionOptions based on active pages only, so we
-   * must translate targetPosition into a raw pageOrder index here.
+   * For cross-file moves, pages are assigned new unique virtual IDs in the target
+   * file so there are no pageNum collisions (which would break selection).
    */
   function handleMovePages(targetFileId: number, targetPosition: number) {
     // Work from current filesData synchronously via the ref
@@ -518,34 +578,46 @@ export default function App() {
       bySourceFile.get(p.id)!.add(p.pageNum);
     }
 
-    // Helper: collect ordered page entries for pages being moved from a file
     interface PageEntry {
-      pageNum: number;
+      // The virtual page ID to use in the TARGET file's pageOrder
+      // For same-file moves this stays the same; for cross-file it's a new ID.
+      targetPageNum: number;
       rotation: number;
       thumbnail: string | null;
+      // The resolved real origin for virtualPageMap population
+      origin: VirtualPageSource;
     }
 
-    function extractPages(file: FileData, movingSet: Set<number>): PageEntry[] {
+    function extractPages(
+      file: FileData,
+      movingSet: Set<number>,
+      isCrossFile: boolean,
+    ): PageEntry[] {
       const entries: PageEntry[] = [];
       for (let i = 0; i < file.pageOrder.length; i++) {
         const pn = file.pageOrder[i];
         if (movingSet.has(pn)) {
+          const origin = resolvePageOrigin(file, pn);
           entries.push({
-            pageNum: pn,
+            // For cross-file moves, give a fresh unique ID to avoid collisions
+            targetPageNum: isCrossFile ? nextVirtualPageId() : pn,
             rotation: file.rotations[i] ?? 0,
             thumbnail: file.thumbnails[i] ?? null,
+            origin,
           });
         }
       }
       return entries;
     }
 
-    // Collect all pages to insert, preserving cross-file order by source order
+    const isCrossFile = !bySourceFile.has(targetFileId);
+
+    // Collect all pages to insert
     const pagesToInsert: PageEntry[] = [];
     for (const file of current) {
       const movingSet = bySourceFile.get(file.id);
       if (!movingSet || movingSet.size === 0) continue;
-      pagesToInsert.push(...extractPages(file, movingSet));
+      pagesToInsert.push(...extractPages(file, movingSet, isCrossFile));
     }
 
     if (pagesToInsert.length === 0) return;
@@ -560,27 +632,24 @@ export default function App() {
 
       if (isTarget && isSource) {
         // Same-file move: remove the moving pages first, then reinsert
-        const sameFileMoving = new Set(
-          extractPages(file, movingSet!).map((e) => e.pageNum),
-        );
+        // For same-file moves, targetPageNum === original pageNum (no ID change)
+        const sameFileMovingSet = movingSet!;
+
         // Build arrays without moving pages
         const remainOrder: number[] = [];
         const remainRot: number[] = [];
         const remainThumb: (string | null)[] = [];
         for (let i = 0; i < file.pageOrder.length; i++) {
-          if (!sameFileMoving.has(file.pageOrder[i])) {
+          if (!sameFileMovingSet.has(file.pageOrder[i])) {
             remainOrder.push(file.pageOrder[i]);
             remainRot.push(file.rotations[i] ?? 0);
             remainThumb.push(file.thumbnails[i] ?? null);
           }
         }
-        // targetPosition is an index into the active (non-removed) pages of the
-        // ORIGINAL file. We need to map it to an index in remainOrder.
-        // Active pages in original order (excluding moving pages):
+        // Map targetPosition (index into active non-removed remain pages) to remainOrder index
         const activeRemain = remainOrder.filter(
           (p) => !file.removePages.includes(p),
         );
-        // insertAfterPageNum: the active page after which we insert (or null = beginning)
         const insertAfterActive =
           targetPosition > 0 ? activeRemain[targetPosition - 1] : null;
         let insertIdx: number;
@@ -591,28 +660,40 @@ export default function App() {
         }
         insertIdx = Math.min(insertIdx, remainOrder.length);
 
-        // Only insert pages that belong to this same-file move
-        const toInsert = pagesToInsert.filter((e) =>
-          sameFileMoving.has(e.pageNum),
+        remainOrder.splice(
+          insertIdx,
+          0,
+          ...pagesToInsert.map((e) => e.targetPageNum),
         );
-        remainOrder.splice(insertIdx, 0, ...toInsert.map((e) => e.pageNum));
-        remainRot.splice(insertIdx, 0, ...toInsert.map((e) => e.rotation));
-        remainThumb.splice(insertIdx, 0, ...toInsert.map((e) => e.thumbnail));
+        remainRot.splice(insertIdx, 0, ...pagesToInsert.map((e) => e.rotation));
+        remainThumb.splice(
+          insertIdx,
+          0,
+          ...pagesToInsert.map((e) => e.thumbnail),
+        );
 
         return {
           ...file,
           pageOrder: remainOrder,
           rotations: remainRot,
           thumbnails: remainThumb,
+          // virtualPageMap unchanged for same-file moves
         };
       }
 
       if (isTarget && !isSource) {
-        // Pure target (cross-file): insert the pages from other files
+        // Pure cross-file target: insert incoming pages with new virtual IDs
         const newOrder = [...file.pageOrder];
         const newRot = [...file.rotations];
         const newThumb = [...file.thumbnails];
-        // targetPosition is index into active pages of the target file
+        const newVirtualPageMap = { ...file.virtualPageMap };
+
+        // Register each incoming page in the virtualPageMap
+        for (const entry of pagesToInsert) {
+          newVirtualPageMap[entry.targetPageNum] = entry.origin;
+        }
+
+        // Map targetPosition to insertion index
         const activePages = newOrder.filter(
           (p) => !file.removePages.includes(p),
         );
@@ -626,7 +707,11 @@ export default function App() {
         }
         insertIdx = Math.min(insertIdx, newOrder.length);
 
-        newOrder.splice(insertIdx, 0, ...pagesToInsert.map((e) => e.pageNum));
+        newOrder.splice(
+          insertIdx,
+          0,
+          ...pagesToInsert.map((e) => e.targetPageNum),
+        );
         newRot.splice(insertIdx, 0, ...pagesToInsert.map((e) => e.rotation));
         newThumb.splice(insertIdx, 0, ...pagesToInsert.map((e) => e.thumbnail));
 
@@ -635,18 +720,24 @@ export default function App() {
           pageOrder: newOrder,
           rotations: newRot,
           thumbnails: newThumb,
+          virtualPageMap: newVirtualPageMap,
         };
       }
 
-      // Source only (cross-file): remove the moving pages
+      // Source only (cross-file): remove the moving pages and clean up virtualPageMap
       const newOrder: number[] = [];
       const newRot: number[] = [];
       const newThumb: (string | null)[] = [];
+      const newVirtualPageMap = { ...file.virtualPageMap };
       for (let i = 0; i < file.pageOrder.length; i++) {
-        if (!movingSet!.has(file.pageOrder[i])) {
-          newOrder.push(file.pageOrder[i]);
+        const pn = file.pageOrder[i];
+        if (!movingSet!.has(pn)) {
+          newOrder.push(pn);
           newRot.push(file.rotations[i] ?? 0);
           newThumb.push(file.thumbnails[i] ?? null);
+        } else {
+          // Clean up virtual map entry if present
+          delete newVirtualPageMap[pn];
         }
       }
       return {
@@ -654,6 +745,7 @@ export default function App() {
         pageOrder: newOrder,
         rotations: newRot,
         thumbnails: newThumb,
+        virtualPageMap: newVirtualPageMap,
       };
     });
 
@@ -673,29 +765,49 @@ export default function App() {
     try {
       const merged = await window.PDFLib.PDFDocument.create();
       setMergeProgress(20);
+
+      // Pre-load all PDF documents keyed by fileId
+      const pdfCache = new Map<
+        number,
+        ReturnType<typeof window.PDFLib.PDFDocument.load> extends Promise<
+          infer T
+        >
+          ? T
+          : never
+      >();
       for (const fileData of filesData) {
         const bytes = await fileData.file.arrayBuffer();
         const pdf = await window.PDFLib.PDFDocument.load(bytes);
+        pdfCache.set(fileData.id, pdf);
+      }
+
+      setMergeProgress(30);
+
+      for (const fileData of filesData) {
         const keptPages = fileData.pageOrder.filter(
           (p) => !fileData.removePages.includes(p),
         );
-        const indicesToCopy = keptPages.map((pageNum) => {
-          // Handle duplicated/moved virtual pages (> original pageCount) by mapping back
-          const realPage =
-            pageNum > fileData.pageCount
-              ? fileData.pageOrder[fileData.pageOrder.indexOf(pageNum) - 1] || 1
-              : pageNum;
-          return Math.min(realPage - 1, pdf.getPageCount() - 1);
-        });
-        const copiedPages = await merged.copyPages(pdf, indicesToCopy);
-        setMergeProgress(50);
-        copiedPages.forEach((page, i) => {
-          const posIdx = fileData.pageOrder.indexOf(keptPages[i]);
+
+        for (let i = 0; i < keptPages.length; i++) {
+          const pageNum = keptPages[i];
+          const posIdx = fileData.pageOrder.indexOf(pageNum);
           const rotation = posIdx !== -1 ? fileData.rotations[posIdx] || 0 : 0;
-          page.setRotation(window.PDFLib.degrees(rotation));
-          merged.addPage(page);
-        });
+
+          // Resolve the real source
+          const origin = resolvePageOrigin(fileData, pageNum);
+          const sourcePdf = pdfCache.get(origin.sourceFileId);
+          if (!sourcePdf) continue;
+
+          const realPageIdx = Math.min(
+            origin.originalPageNum - 1,
+            sourcePdf.getPageCount() - 1,
+          );
+          const [copiedPage] = await merged.copyPages(sourcePdf, [realPageIdx]);
+          copiedPage.setRotation(window.PDFLib.degrees(rotation));
+          merged.addPage(copiedPage);
+        }
       }
+
       setMergeProgress(90);
       const pdfBytes = await merged.save();
       const blob = new Blob([pdfBytes], { type: "application/pdf" });
