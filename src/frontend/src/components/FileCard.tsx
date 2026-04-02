@@ -12,8 +12,6 @@ interface FileCardProps {
   index: number;
   selectedPages: SelectedPage[];
   thumbSize?: ThumbSize;
-  isDraggingPage: boolean;
-  draggingPageCount: number;
   onRemoveFile: (index: number) => void;
   onSelectPage: (page: SelectedPage, e?: React.MouseEvent) => void;
   onSelectAll: (fileId: number) => void;
@@ -46,8 +44,6 @@ export default function FileCard({
   index,
   selectedPages,
   thumbSize = "md",
-  isDraggingPage,
-  draggingPageCount,
   onRemoveFile,
   onSelectPage,
   onSelectAll,
@@ -63,7 +59,6 @@ export default function FileCard({
   onDuplicatePage,
 }: FileCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isEndDropActive, setIsEndDropActive] = useState(false);
   const isDragOver = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -99,16 +94,6 @@ export default function FileCard({
   const visiblePageCount = data.pageOrder.filter(
     (p) => !data.removePages.includes(p),
   ).length;
-
-  const dropZoneLabel =
-    draggingPageCount > 1
-      ? `Drop ${draggingPageCount} pages here`
-      : "Drop page here";
-
-  const endDropZoneLabel =
-    draggingPageCount > 1
-      ? `Drop ${draggingPageCount} pages at end`
-      : "Drop here to add at end";
 
   return (
     <div
@@ -188,90 +173,36 @@ export default function FileCard({
       {!isCollapsed && (
         <div className="p-4">
           {data.pageOrder.length === 0 ? (
-            // Empty file — show drop zone if dragging a page
-            isDraggingPage ? (
-              <div
-                data-ocid={`file.item.${index + 1}.dropzone`}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setIsEndDropActive(true);
-                }}
-                onDragLeave={() => setIsEndDropActive(false)}
-                onDrop={(e) => {
-                  e.stopPropagation();
-                  setIsEndDropActive(false);
-                  onPageDrop(e, data.id, -1);
-                }}
-                className={cn(
-                  "border-2 border-dashed rounded-lg p-6 text-center text-sm transition-all duration-150",
-                  isEndDropActive
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground",
-                )}
-              >
-                {dropZoneLabel}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No pages
-              </p>
-            )
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No pages
+            </p>
           ) : (
-            <>
-              <div className="flex flex-wrap gap-3">
-                {data.pageOrder.map((pageNum, thumbIdx) => (
-                  <PageThumb
-                    key={`${data.id}-${pageNum}`}
-                    fileId={data.id}
-                    pageNum={pageNum}
-                    thumbnail={data.thumbnails[thumbIdx]}
-                    isSelected={selectedPages.some(
-                      (p) => p.id === data.id && p.pageNum === pageNum,
-                    )}
-                    isRemoved={data.removePages.includes(pageNum)}
-                    size={thumbSize}
-                    positionIndex={thumbIdx + 1}
-                    onSelect={onSelectPage}
-                    onDragStart={onPageDragStart}
-                    onDragEnd={onPageDragEnd}
-                    onDragOver={onPageDragOver}
-                    onDrop={onPageDrop}
-                    index={thumbIdx + 1}
-                    onRotateLeft={(fid, pn) => onRotatePage(fid, pn, "left")}
-                    onRotateRight={(fid, pn) => onRotatePage(fid, pn, "right")}
-                    onDuplicate={onDuplicatePage}
-                    onRemove={onRemovePageSingle}
-                  />
-                ))}
-              </div>
-
-              {/* End-of-file drop zone — visible when a page is being dragged */}
-              {isDraggingPage && (
-                <div
-                  data-ocid={`file.item.${index + 1}.dropzone`}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setIsEndDropActive(true);
-                  }}
-                  onDragLeave={() => setIsEndDropActive(false)}
-                  onDrop={(e) => {
-                    e.stopPropagation();
-                    setIsEndDropActive(false);
-                    onPageDrop(e, data.id, -1);
-                  }}
-                  className={cn(
-                    "mt-3 border-2 border-dashed rounded-lg py-2 px-4 text-center text-xs transition-all duration-150 cursor-default",
-                    isEndDropActive
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border/60 text-muted-foreground/60",
+            <div className="flex flex-wrap gap-3">
+              {data.pageOrder.map((pageNum, thumbIdx) => (
+                <PageThumb
+                  key={`${data.id}-${pageNum}`}
+                  fileId={data.id}
+                  pageNum={pageNum}
+                  thumbnail={data.thumbnails[thumbIdx]}
+                  isSelected={selectedPages.some(
+                    (p) => p.id === data.id && p.pageNum === pageNum,
                   )}
-                >
-                  {endDropZoneLabel}
-                </div>
-              )}
-            </>
+                  isRemoved={data.removePages.includes(pageNum)}
+                  size={thumbSize}
+                  positionIndex={thumbIdx + 1}
+                  onSelect={onSelectPage}
+                  onDragStart={onPageDragStart}
+                  onDragEnd={onPageDragEnd}
+                  onDragOver={onPageDragOver}
+                  onDrop={onPageDrop}
+                  index={thumbIdx + 1}
+                  onRotateLeft={(fid, pn) => onRotatePage(fid, pn, "left")}
+                  onRotateRight={(fid, pn) => onRotatePage(fid, pn, "right")}
+                  onDuplicate={onDuplicatePage}
+                  onRemove={onRemovePageSingle}
+                />
+              ))}
+            </div>
           )}
         </div>
       )}

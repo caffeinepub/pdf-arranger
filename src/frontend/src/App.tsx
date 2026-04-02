@@ -4,7 +4,7 @@ import Toolbar from "@/components/Toolbar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { FileText, Heart } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export interface FileData {
@@ -89,8 +89,6 @@ export default function App() {
   const [mergeProgress, setMergeProgress] = useState(0);
   const [outputFilename, setOutputFilename] = useState("merged");
   const [thumbSize, setThumbSize] = useState<ThumbSize>("md");
-  const [isDraggingPage, setIsDraggingPage] = useState(false);
-  const [draggingPageCount, setDraggingPageCount] = useState(0);
 
   // Undo stack — stores up to 10 snapshots of filesData
   const undoStack = useRef<FileData[][]>([]);
@@ -126,8 +124,8 @@ export default function App() {
 
   // Drag refs (avoid stale closures)
   const draggedFileIndex = useRef<number | null>(null);
-  // Now holds ALL pages being dragged (multi-select support)
-  const draggedPages = useRef<SelectedPage[] | null>(null);
+  // Single page being dragged
+  const draggedPage = useRef<{ fileId: number; pageNum: number } | null>(null);
   const addMoreInputRef = useRef<HTMLInputElement>(null);
 
   function handleUndo() {
@@ -577,171 +575,63 @@ export default function App() {
     draggedFileIndex.current = null;
   }
 
-  // --- Page drag-and-drop (multi-select aware) ---
+  // --- Page drag-and-drop (single page within same file only) ---
   function handlePageDragStart(
     e: React.DragEvent<HTMLDivElement>,
     fileId: number,
     pageNum: number,
   ) {
-    // Use stable ref so we get the current selection at drag-start time
-    const currentSelection = selectedPagesRef.current;
-    const isDraggedPageSelected = currentSelection.some(
-      (p) => p.id === fileId && p.pageNum === pageNum,
-    );
-
-    // If the dragged page is part of the current selection, drag all selected pages.
-    // Otherwise, drag only this single page (don't change selection).
-    const pagesToDrag: SelectedPage[] = isDraggedPageSelected
-      ? currentSelection
-      : [{ id: fileId, pageNum }];
-
-    draggedPages.current = pagesToDrag;
-    setIsDraggingPage(true);
-    setDraggingPageCount(pagesToDrag.length);
+    draggedPage.current = { fileId, pageNum };
     e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData(
-      "text/plain",
-      `pages:${pagesToDrag.map((p) => `${p.id}:${p.pageNum}`).join(",")}`,
-    );
-
-    // Custom drag ghost for multi-page drags
-    if (pagesToDrag.length > 1) {
-      const ghost = document.createElement("div");
-      ghost.style.cssText =
-        "position:fixed;top:-9999px;left:-9999px;padding:6px 12px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));border-radius:6px;font-size:13px;font-weight:600;pointer-events:none;";
-      ghost.textContent = `${pagesToDrag.length} pages`;
-      document.body.appendChild(ghost);
-      e.dataTransfer.setDragImage(ghost, 0, 0);
-      setTimeout(() => document.body.removeChild(ghost), 0);
-    }
   }
 
   function handlePageDragEnd() {
-    setIsDraggingPage(false);
-    setDraggingPageCount(0);
-    draggedPages.current = null;
+    draggedPage.current = null;
   }
 
   function handlePageDragOver(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
   }
 
-  // -1 as targetPageNum is the sentinel meaning "append to end"
-  const handlePageDrop = useCallback(
-    (
-      e: React.DragEvent<HTMLDivElement>,
-      targetFileId: number,
-      targetPageNum: number,
-    ) => {
-      e.preventDefault();
-      const dragged = draggedPages.current;
-      if (!dragged || dragged.length === 0) return;
+  function handlePageDrop(
+    e: React.DragEvent<HTMLDivElement>,
+    targetFileId: number,
+    targetPageNum: number,
+  ) {
+    e.preventDefault();
+    const dragged = draggedPage.current;
+    if (!dragged) return;
+    // Only allow within the same file
+    if (dragged.fileId !== targetFileId) return;
+    if (dragged.pageNum === targetPageNum) return;
 
-      // Use stable refs to avoid needing filesData in deps
-      pushUndoRef.current(filesDataRef.current);
-
-      setFilesData((prev) => {
-        const next = prev.map((f) => ({
-          ...f,
-          pageOrder: [...f.pageOrder],
-          rotations: [...f.rotations],
-          thumbnails: [...f.thumbnails],
-        }));
-
-        // Group dragged pages by source file, preserving their relative order
-        // within each source file
-        const bySourceFile = new Map<number, number[]>();
-        for (const dp of dragged) {
-          if (!bySourceFile.has(dp.id)) bySourceFile.set(dp.id, []);
-          bySourceFile.get(dp.id)!.push(dp.pageNum);
-        }
-
-        // Collect all (pageNum, rotation, thumbnail) to be inserted at destination,
-        // in the order they appear across source files (source file order from `next`)
-        const pagesPayload: Array<{
-          pageNum: number;
-          rotation: number;
-          thumbnail: string | null;
-        }> = [];
-
-        // Iterate source files in the same order they appear in `next`
-        for (const srcFile of next) {
-          const srcPageNums = bySourceFile.get(srcFile.id);
-          if (!srcPageNums) continue;
-
-          // Sort them by their current position in the file's pageOrder
-          const sorted = [...srcPageNums].sort(
-            (a, b) =>
-              srcFile.pageOrder.indexOf(a) - srcFile.pageOrder.indexOf(b),
-          );
-
-          // Collect and remove from source
-          for (const pageNum of sorted) {
-            const srcIdx = srcFile.pageOrder.indexOf(pageNum);
-            if (srcIdx === -1) continue;
-            pagesPayload.push({
-              pageNum,
-              rotation: srcFile.rotations[srcIdx] ?? 0,
-              thumbnail: srcFile.thumbnails[srcIdx] ?? null,
-            });
-          }
-        }
-
-        // Now remove them all from their source files
-        for (const srcFile of next) {
-          const srcPageNums = bySourceFile.get(srcFile.id);
-          if (!srcPageNums) continue;
-          for (const pageNum of srcPageNums) {
-            const srcIdx = srcFile.pageOrder.indexOf(pageNum);
-            if (srcIdx === -1) continue;
-            srcFile.pageOrder.splice(srcIdx, 1);
-            srcFile.rotations.splice(srcIdx, 1);
-            srcFile.thumbnails.splice(srcIdx, 1);
-          }
-        }
-
-        // Insert all pages into target file at drop position
-        const tgtFile = next.find((f) => f.id === targetFileId);
-        if (!tgtFile) return prev;
-
-        if (targetPageNum === -1) {
-          // Append to end
-          for (const payload of pagesPayload) {
-            tgtFile.pageOrder.push(payload.pageNum);
-            tgtFile.rotations.push(payload.rotation);
-            tgtFile.thumbnails.push(payload.thumbnail);
-          }
-        } else {
-          // Find the drop index — note: we already removed source pages so index may have shifted
-          let tgtIdx = tgtFile.pageOrder.indexOf(targetPageNum);
-          if (tgtIdx === -1) {
-            // target page was removed (it was one of the dragged pages, edge case)
-            // append to end of target
-            for (const payload of pagesPayload) {
-              tgtFile.pageOrder.push(payload.pageNum);
-              tgtFile.rotations.push(payload.rotation);
-              tgtFile.thumbnails.push(payload.thumbnail);
-            }
-          } else {
-            // Insert all pages starting at tgtIdx, preserving order
-            for (let i = 0; i < pagesPayload.length; i++) {
-              const payload = pagesPayload[i];
-              tgtFile.pageOrder.splice(tgtIdx + i, 0, payload.pageNum);
-              tgtFile.rotations.splice(tgtIdx + i, 0, payload.rotation);
-              tgtFile.thumbnails.splice(tgtIdx + i, 0, payload.thumbnail);
-            }
-          }
-        }
-
-        return next;
-      });
-
-      draggedPages.current = null;
-      setIsDraggingPage(false);
-      setDraggingPageCount(0);
-    },
-    [],
-  );
+    pushUndo(filesDataRef.current);
+    setFilesData((prev) =>
+      prev.map((file) => {
+        if (file.id !== targetFileId) return file;
+        const newOrder = [...file.pageOrder];
+        const newRotations = [...file.rotations];
+        const newThumbnails = [...file.thumbnails];
+        const fromIdx = newOrder.indexOf(dragged.pageNum);
+        const toIdx = newOrder.indexOf(targetPageNum);
+        if (fromIdx === -1 || toIdx === -1) return file;
+        // Move the page
+        const [removedPage] = newOrder.splice(fromIdx, 1);
+        const [removedRot] = newRotations.splice(fromIdx, 1);
+        const [removedThumb] = newThumbnails.splice(fromIdx, 1);
+        newOrder.splice(toIdx, 0, removedPage);
+        newRotations.splice(toIdx, 0, removedRot);
+        newThumbnails.splice(toIdx, 0, removedThumb);
+        return {
+          ...file,
+          pageOrder: newOrder,
+          rotations: newRotations,
+          thumbnails: newThumbnails,
+        };
+      }),
+    );
+    draggedPage.current = null;
+  }
 
   const hasFiles = filesData.length > 0;
   const hasSelection = selectedPages.length > 0;
@@ -822,8 +712,6 @@ export default function App() {
                       index={index}
                       selectedPages={selectedPages}
                       thumbSize={thumbSize}
-                      isDraggingPage={isDraggingPage}
-                      draggingPageCount={draggingPageCount}
                       onRemoveFile={handleRemoveFile}
                       onSelectPage={handleSelectPage}
                       onSelectAll={handleSelectAllInFile}
