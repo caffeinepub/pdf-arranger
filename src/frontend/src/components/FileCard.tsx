@@ -13,6 +13,7 @@ interface FileCardProps {
   selectedPages: SelectedPage[];
   thumbSize?: ThumbSize;
   isDraggingPage: boolean;
+  draggingPageCount: number;
   onRemoveFile: (index: number) => void;
   onSelectPage: (page: SelectedPage, e?: React.MouseEvent) => void;
   onSelectAll: (fileId: number) => void;
@@ -46,6 +47,7 @@ export default function FileCard({
   selectedPages,
   thumbSize = "md",
   isDraggingPage,
+  draggingPageCount,
   onRemoveFile,
   onSelectPage,
   onSelectAll,
@@ -97,6 +99,16 @@ export default function FileCard({
   const visiblePageCount = data.pageOrder.filter(
     (p) => !data.removePages.includes(p),
   ).length;
+
+  const dropZoneLabel =
+    draggingPageCount > 1
+      ? `Drop ${draggingPageCount} pages here`
+      : "Drop page here";
+
+  const endDropZoneLabel =
+    draggingPageCount > 1
+      ? `Drop ${draggingPageCount} pages at end`
+      : "Drop here to add at end";
 
   return (
     <div
@@ -198,7 +210,7 @@ export default function FileCard({
                     : "border-border text-muted-foreground",
                 )}
               >
-                Drop page here
+                {dropZoneLabel}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground text-center py-4">
@@ -256,7 +268,7 @@ export default function FileCard({
                       : "border-border/60 text-muted-foreground/60",
                   )}
                 >
-                  Drop here to add at end
+                  {endDropZoneLabel}
                 </div>
               )}
             </>
