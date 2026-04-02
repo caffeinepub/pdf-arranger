@@ -40,6 +40,10 @@ function nextVirtualPageId(): number {
   return ++virtualPageCounter;
 }
 
+// Registry of all File objects ever added, keyed by FileData id.
+// Used during merge to resolve virtual pages from removed source files.
+const sourceFileRegistry = new Map<number, File>();
+
 // Initialize pdf.js worker
 function initPdfJsWorker() {
   if (typeof window !== "undefined" && window.pdfjsLib) {
@@ -284,6 +288,9 @@ export default function App() {
           thumbnails: new Array(pageCount).fill(null),
           virtualPageMap: {},
         };
+        // Register in the source file registry so it can be looked up during
+        // merge even if the FileData entry is later removed from filesData.
+        sourceFileRegistry.set(entry.id, file);
         newEntries.push(entry);
       } catch {
         toast.error(`Failed to load ${file.name}`);
@@ -563,8 +570,9 @@ export default function App() {
    * Move selected pages to a specific position within a target file.
    * targetPosition: 0 = beginning, N = after the Nth active (non-removed) page.
    *
-   * For cross-file moves, pages are assigned new unique virtual IDs in the target
-   * file so there are no pageNum collisions (which would break selection).
+   * Cross-file determination is per-source: a page moving from file S to target T
+   * is cross-file if S.id !== T.id, regardless of whether other sources equal T.
+   * This avoids ID collisions when pages from multiple sources land in the same target.
    */
   function handleMovePages(targetFileId: number, targetPosition: number) {
     // Work from current filesData synchronously via the ref
@@ -586,12 +594,14 @@ export default function App() {
       thumbnail: string | null;
       // The resolved real origin for virtualPageMap population
       origin: VirtualPageSource;
+      // Whether this entry needs a virtualPageMap entry in the target
+      isCrossFile: boolean;
     }
 
     function extractPages(
       file: FileData,
       movingSet: Set<number>,
-      isCrossFile: boolean,
+      crossFile: boolean,
     ): PageEntry[] {
       const entries: PageEntry[] = [];
       for (let i = 0; i < file.pageOrder.length; i++) {
@@ -600,24 +610,27 @@ export default function App() {
           const origin = resolvePageOrigin(file, pn);
           entries.push({
             // For cross-file moves, give a fresh unique ID to avoid collisions
-            targetPageNum: isCrossFile ? nextVirtualPageId() : pn,
+            targetPageNum: crossFile ? nextVirtualPageId() : pn,
             rotation: file.rotations[i] ?? 0,
             thumbnail: file.thumbnails[i] ?? null,
             origin,
+            isCrossFile: crossFile,
           });
         }
       }
       return entries;
     }
 
-    const isCrossFile = !bySourceFile.has(targetFileId);
-
-    // Collect all pages to insert
+    // Collect all pages to insert — cross-file is determined per source file
     const pagesToInsert: PageEntry[] = [];
     for (const file of current) {
       const movingSet = bySourceFile.get(file.id);
       if (!movingSet || movingSet.size === 0) continue;
-      pagesToInsert.push(...extractPages(file, movingSet, isCrossFile));
+      // A page is cross-file if its source file is different from the target file
+      const isThisSourceCrossFile = file.id !== targetFileId;
+      pagesToInsert.push(
+        ...extractPages(file, movingSet, isThisSourceCrossFile),
+      );
     }
 
     if (pagesToInsert.length === 0) return;
@@ -631,14 +644,16 @@ export default function App() {
       if (!isTarget && !isSource) return file;
 
       if (isTarget && isSource) {
-        // Same-file move: remove the moving pages first, then reinsert
-        // For same-file moves, targetPageNum === original pageNum (no ID change)
+        // This file is both a source and the target.
+        // Same-file pages (from this file's movingSet) keep their IDs.
+        // Cross-file pages (from other sources) have already been assigned new IDs in pagesToInsert.
         const sameFileMovingSet = movingSet!;
 
-        // Build arrays without moving pages
+        // Build arrays without the same-file moving pages
         const remainOrder: number[] = [];
         const remainRot: number[] = [];
         const remainThumb: (string | null)[] = [];
+        const newVirtualPageMap = { ...file.virtualPageMap };
         for (let i = 0; i < file.pageOrder.length; i++) {
           if (!sameFileMovingSet.has(file.pageOrder[i])) {
             remainOrder.push(file.pageOrder[i]);
@@ -660,6 +675,13 @@ export default function App() {
         }
         insertIdx = Math.min(insertIdx, remainOrder.length);
 
+        // Register cross-file entries in virtualPageMap
+        for (const entry of pagesToInsert) {
+          if (entry.isCrossFile) {
+            newVirtualPageMap[entry.targetPageNum] = entry.origin;
+          }
+        }
+
         remainOrder.splice(
           insertIdx,
           0,
@@ -677,7 +699,7 @@ export default function App() {
           pageOrder: remainOrder,
           rotations: remainRot,
           thumbnails: remainThumb,
-          // virtualPageMap unchanged for same-file moves
+          virtualPageMap: newVirtualPageMap,
         };
       }
 
@@ -688,9 +710,11 @@ export default function App() {
         const newThumb = [...file.thumbnails];
         const newVirtualPageMap = { ...file.virtualPageMap };
 
-        // Register each incoming page in the virtualPageMap
+        // Register each incoming cross-file page in the virtualPageMap
         for (const entry of pagesToInsert) {
-          newVirtualPageMap[entry.targetPageNum] = entry.origin;
+          if (entry.isCrossFile) {
+            newVirtualPageMap[entry.targetPageNum] = entry.origin;
+          }
         }
 
         // Map targetPosition to insertion index
@@ -724,7 +748,7 @@ export default function App() {
         };
       }
 
-      // Source only (cross-file): remove the moving pages and clean up virtualPageMap
+      // Source only (not target): remove the moving pages and clean up virtualPageMap
       const newOrder: number[] = [];
       const newRot: number[] = [];
       const newThumb: (string | null)[] = [];
@@ -779,6 +803,26 @@ export default function App() {
         const bytes = await fileData.file.arrayBuffer();
         const pdf = await window.PDFLib.PDFDocument.load(bytes);
         pdfCache.set(fileData.id, pdf);
+      }
+
+      // Also load any source files referenced by virtualPageMap entries that
+      // aren't currently in filesData (e.g. source file card was removed after
+      // a cross-file move). The sourceFileRegistry retains the File object.
+      const allSourceFileIds = new Set<number>();
+      for (const fileData of filesData) {
+        for (const src of Object.values(fileData.virtualPageMap)) {
+          allSourceFileIds.add(src.sourceFileId);
+        }
+      }
+      for (const srcId of allSourceFileIds) {
+        if (!pdfCache.has(srcId)) {
+          const srcFile = sourceFileRegistry.get(srcId);
+          if (srcFile) {
+            const bytes = await srcFile.arrayBuffer();
+            const pdf = await window.PDFLib.PDFDocument.load(bytes);
+            pdfCache.set(srcId, pdf);
+          }
+        }
       }
 
       setMergeProgress(30);

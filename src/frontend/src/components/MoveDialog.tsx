@@ -66,10 +66,19 @@ export default function MoveDialog({
     : null;
 
   // Positions: before page 1, between pages, after last page
+  // For same-file moves, exclude the pages being moved from the count since
+  // they will be removed before the insertion point is resolved.
   const positionOptions: { label: string; value: number }[] = [];
   if (targetFile) {
+    // Build the set of page numbers being moved that belong to the target file
+    const movingPageNums = new Set(
+      selectedPages
+        .filter((p) => p.id === Number(targetFileId))
+        .map((p) => p.pageNum),
+    );
+
     const activePages = targetFile.pageOrder.filter(
-      (p) => !targetFile.removePages.includes(p),
+      (p) => !targetFile.removePages.includes(p) && !movingPageNums.has(p),
     );
     positionOptions.push({ label: "Beginning (before page 1)", value: 0 });
     for (let i = 0; i < activePages.length; i++) {
