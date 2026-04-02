@@ -1,0 +1,140 @@
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/assets/fonts/PlusJakartaSans.woff2") format("woff2");
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+
+    /* Page background: very light gray #EEF1F4 */
+    --background: 0.953 0.008 240;
+    /* Body text: dark gray #1F2937 */
+    --foreground: 0.21 0.018 255;
+
+    /* Cards: white */
+    --card: 1 0 0;
+    --card-foreground: 0.21 0.018 255;
+
+    --popover: 1 0 0;
+    --popover-foreground: 0.21 0.018 255;
+
+    /* Primary blue #3B82F6 */
+    --primary: 0.6 0.188 250;
+    --primary-foreground: 1 0 0;
+
+    /* Secondary: muted blue-gray */
+    --secondary: 0.92 0.01 240;
+    --secondary-foreground: 0.21 0.018 255;
+
+    /* Muted */
+    --muted: 0.94 0.008 240;
+    --muted-foreground: 0.52 0.015 240;
+
+    /* Accent */
+    --accent: 0.92 0.015 240;
+    --accent-foreground: 0.21 0.018 255;
+
+    /* Destructive: red #E24A4A */
+    --destructive: 0.55 0.22 25;
+    --destructive-foreground: 1 0 0;
+
+    /* Border: #E5E7EB */
+    --border: 0.908 0.008 240;
+    --input: 0.908 0.008 240;
+    --ring: 0.6 0.188 250;
+
+    /* Header: #2B323B (deep blue-gray) */
+    --header: 0.268 0.022 240;
+    --header-foreground: 0.96 0.008 240;
+
+    /* Toolbar: #1F2731 (darker charcoal) */
+    --toolbar: 0.22 0.025 240;
+    --toolbar-foreground: 0.92 0.008 240;
+
+    /* Chart tokens */
+    --chart-1: 0.6 0.188 250;
+    --chart-2: 0.55 0.22 25;
+    --chart-3: 0.7 0.15 150;
+    --chart-4: 0.75 0.18 85;
+    --chart-5: 0.65 0.2 300;
+
+    /* Sidebar */
+    --sidebar: 0.268 0.022 240;
+    --sidebar-foreground: 0.96 0.008 240;
+    --sidebar-primary: 0.6 0.188 250;
+    --sidebar-primary-foreground: 1 0 0;
+    --sidebar-accent: 0.3 0.025 240;
+    --sidebar-accent-foreground: 0.92 0.008 240;
+    --sidebar-border: 0.35 0.02 240;
+    --sidebar-ring: 0.6 0.188 250;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer utilities {
+  .bg-header {
+    background-color: oklch(var(--header));
+  }
+  .text-header-foreground {
+    color: oklch(var(--header-foreground));
+  }
+  .bg-toolbar {
+    background-color: oklch(var(--toolbar));
+  }
+  .text-toolbar-foreground {
+    color: oklch(var(--toolbar-foreground));
+  }
+  .border-header {
+    border-color: oklch(var(--header));
+  }
+}
+
+/* Drag over indicator */
+.drag-over {
+  outline: 2px dashed oklch(0.6 0.188 250);
+  outline-offset: 2px;
+  background: oklch(0.6 0.188 250 / 0.08);
+}
+
+/* Page card drag over */
+.page-drag-over {
+  outline: 2px solid oklch(0.6 0.188 250);
+  outline-offset: 2px;
+}
+
+/* Disable text selection during drag */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Smooth thumbnail load */
+@keyframes thumb-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.thumb-animate {
+  animation: thumb-in 0.15s ease-out;
+}
