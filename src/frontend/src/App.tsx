@@ -103,6 +103,11 @@ export default function App() {
   const selectedPagesRef = useRef<SelectedPage[]>(selectedPages);
   selectedPagesRef.current = selectedPages;
 
+  // Ref that tracks whether the Move dialog is open (used in the mousedown handler
+  // to avoid clearing selection when the user clicks inside the Radix portal).
+  const isMoveDialogOpenRef = useRef(false);
+  isMoveDialogOpenRef.current = isMoveDialogOpen;
+
   // Stable ref to pushUndo so it never changes identity
   const pushUndoRef = useRef((snapshot: FileData[]) => {
     undoStack.current = [
@@ -175,12 +180,20 @@ export default function App() {
   // Click outside to deselect
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
+      // Never deselect while the Move dialog is open — selection must stay intact
+      if (isMoveDialogOpenRef.current) return;
+
       const target = e.target as HTMLElement;
       if (
         !target.closest("[data-ocid^='page.']") &&
         !target.closest("[data-ocid^='toolbar.']") &&
         !target.closest("[data-ocid^='file.item']") &&
-        !target.closest("[role='dialog']")
+        !target.closest("[role='dialog']") &&
+        !target.closest("[data-radix-popper-content-wrapper]") &&
+        !target.closest("[data-radix-select-viewport]") &&
+        !target.closest("[role='listbox']") &&
+        !target.closest("[role='option']") &&
+        !target.closest("[data-radix-collection-item]")
       ) {
         setSelectedPages([]);
       }
