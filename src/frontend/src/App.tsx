@@ -1,5 +1,6 @@
 import DropZone from "@/components/DropZone";
 import FileCard from "@/components/FileCard";
+import MoveDialog from "@/components/MoveDialog";
 import Toolbar from "@/components/Toolbar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -89,6 +90,7 @@ export default function App() {
   const [mergeProgress, setMergeProgress] = useState(0);
   const [outputFilename, setOutputFilename] = useState("merged");
   const [thumbSize, setThumbSize] = useState<ThumbSize>("md");
+  const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false);
 
   // Undo stack — stores up to 10 snapshots of filesData
   const undoStack = useRef<FileData[][]>([]);
@@ -177,7 +179,8 @@ export default function App() {
       if (
         !target.closest("[data-ocid^='page.']") &&
         !target.closest("[data-ocid^='toolbar.']") &&
-        !target.closest("[data-ocid^='file.item']")
+        !target.closest("[data-ocid^='file.item']") &&
+        !target.closest("[role='dialog']")
       ) {
         setSelectedPages([]);
       }
@@ -483,6 +486,170 @@ export default function App() {
     toast.success("Page duplicated.");
   }
 
+  /**
+   * Move selected pages to a specific position within a target file.
+   * targetPosition: 0 = beginning, N = after the Nth active (non-removed) page.
+   *
+   * The dialog builds positionOptions based on active pages only, so we
+   * must translate targetPosition into a raw pageOrder index here.
+   */
+  function handleMovePages(targetFileId: number, targetPosition: number) {
+    // Work from current filesData synchronously via the ref
+    const current = filesDataRef.current;
+    pushUndo(current);
+
+    // Build the set of pages to move per source file
+    const bySourceFile = new Map<number, Set<number>>();
+    for (const p of selectedPagesRef.current) {
+      if (!bySourceFile.has(p.id)) bySourceFile.set(p.id, new Set());
+      bySourceFile.get(p.id)!.add(p.pageNum);
+    }
+
+    // Helper: collect ordered page entries for pages being moved from a file
+    interface PageEntry {
+      pageNum: number;
+      rotation: number;
+      thumbnail: string | null;
+    }
+
+    function extractPages(file: FileData, movingSet: Set<number>): PageEntry[] {
+      const entries: PageEntry[] = [];
+      for (let i = 0; i < file.pageOrder.length; i++) {
+        const pn = file.pageOrder[i];
+        if (movingSet.has(pn)) {
+          entries.push({
+            pageNum: pn,
+            rotation: file.rotations[i] ?? 0,
+            thumbnail: file.thumbnails[i] ?? null,
+          });
+        }
+      }
+      return entries;
+    }
+
+    // Collect all pages to insert, preserving cross-file order by source order
+    const pagesToInsert: PageEntry[] = [];
+    for (const file of current) {
+      const movingSet = bySourceFile.get(file.id);
+      if (!movingSet || movingSet.size === 0) continue;
+      pagesToInsert.push(...extractPages(file, movingSet));
+    }
+
+    if (pagesToInsert.length === 0) return;
+
+    // Build updated files
+    const updatedFiles = current.map((file) => {
+      const movingSet = bySourceFile.get(file.id);
+      const isTarget = file.id === targetFileId;
+      const isSource = movingSet && movingSet.size > 0;
+
+      if (!isTarget && !isSource) return file;
+
+      if (isTarget && isSource) {
+        // Same-file move: remove the moving pages first, then reinsert
+        const sameFileMoving = new Set(
+          extractPages(file, movingSet!).map((e) => e.pageNum),
+        );
+        // Build arrays without moving pages
+        const remainOrder: number[] = [];
+        const remainRot: number[] = [];
+        const remainThumb: (string | null)[] = [];
+        for (let i = 0; i < file.pageOrder.length; i++) {
+          if (!sameFileMoving.has(file.pageOrder[i])) {
+            remainOrder.push(file.pageOrder[i]);
+            remainRot.push(file.rotations[i] ?? 0);
+            remainThumb.push(file.thumbnails[i] ?? null);
+          }
+        }
+        // targetPosition is an index into the active (non-removed) pages of the
+        // ORIGINAL file. We need to map it to an index in remainOrder.
+        // Active pages in original order (excluding moving pages):
+        const activeRemain = remainOrder.filter(
+          (p) => !file.removePages.includes(p),
+        );
+        // insertAfterPageNum: the active page after which we insert (or null = beginning)
+        const insertAfterActive =
+          targetPosition > 0 ? activeRemain[targetPosition - 1] : null;
+        let insertIdx: number;
+        if (insertAfterActive == null) {
+          insertIdx = 0;
+        } else {
+          insertIdx = remainOrder.lastIndexOf(insertAfterActive) + 1;
+        }
+        insertIdx = Math.min(insertIdx, remainOrder.length);
+
+        // Only insert pages that belong to this same-file move
+        const toInsert = pagesToInsert.filter((e) =>
+          sameFileMoving.has(e.pageNum),
+        );
+        remainOrder.splice(insertIdx, 0, ...toInsert.map((e) => e.pageNum));
+        remainRot.splice(insertIdx, 0, ...toInsert.map((e) => e.rotation));
+        remainThumb.splice(insertIdx, 0, ...toInsert.map((e) => e.thumbnail));
+
+        return {
+          ...file,
+          pageOrder: remainOrder,
+          rotations: remainRot,
+          thumbnails: remainThumb,
+        };
+      }
+
+      if (isTarget && !isSource) {
+        // Pure target (cross-file): insert the pages from other files
+        const newOrder = [...file.pageOrder];
+        const newRot = [...file.rotations];
+        const newThumb = [...file.thumbnails];
+        // targetPosition is index into active pages of the target file
+        const activePages = newOrder.filter(
+          (p) => !file.removePages.includes(p),
+        );
+        const insertAfterActive =
+          targetPosition > 0 ? activePages[targetPosition - 1] : null;
+        let insertIdx: number;
+        if (insertAfterActive == null) {
+          insertIdx = 0;
+        } else {
+          insertIdx = newOrder.lastIndexOf(insertAfterActive) + 1;
+        }
+        insertIdx = Math.min(insertIdx, newOrder.length);
+
+        newOrder.splice(insertIdx, 0, ...pagesToInsert.map((e) => e.pageNum));
+        newRot.splice(insertIdx, 0, ...pagesToInsert.map((e) => e.rotation));
+        newThumb.splice(insertIdx, 0, ...pagesToInsert.map((e) => e.thumbnail));
+
+        return {
+          ...file,
+          pageOrder: newOrder,
+          rotations: newRot,
+          thumbnails: newThumb,
+        };
+      }
+
+      // Source only (cross-file): remove the moving pages
+      const newOrder: number[] = [];
+      const newRot: number[] = [];
+      const newThumb: (string | null)[] = [];
+      for (let i = 0; i < file.pageOrder.length; i++) {
+        if (!movingSet!.has(file.pageOrder[i])) {
+          newOrder.push(file.pageOrder[i]);
+          newRot.push(file.rotations[i] ?? 0);
+          newThumb.push(file.thumbnails[i] ?? null);
+        }
+      }
+      return {
+        ...file,
+        pageOrder: newOrder,
+        rotations: newRot,
+        thumbnails: newThumb,
+      };
+    });
+
+    setFilesData(updatedFiles);
+    setSelectedPages([]);
+    setIsMoveDialogOpen(false);
+    toast.success("Pages moved successfully.");
+  }
+
   async function handleMerge() {
     if (filesData.length === 0) {
       toast.error("Add at least one PDF to merge.");
@@ -642,6 +809,15 @@ export default function App() {
       <div className="min-h-screen flex flex-col bg-background">
         <Toaster position="top-right" richColors />
 
+        {/* Move Pages Dialog */}
+        <MoveDialog
+          open={isMoveDialogOpen}
+          filesData={filesData}
+          selectedPages={selectedPages}
+          onClose={() => setIsMoveDialogOpen(false)}
+          onMove={handleMovePages}
+        />
+
         {/* Header */}
         <header className="bg-header sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -682,6 +858,7 @@ export default function App() {
           onRemovePage={handleRemovePage}
           onSelectAll={handleSelectAllFiles}
           onUndo={handleUndo}
+          onMovePages={() => setIsMoveDialogOpen(true)}
         />
 
         {/* Merge progress bar */}

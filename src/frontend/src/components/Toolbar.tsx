@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
+  ArrowRightLeft,
   CheckSquare,
   Download,
   FilePlus,
@@ -34,6 +35,7 @@ interface ToolbarProps {
   onRemovePage: () => void;
   onSelectAll: () => void;
   onUndo: () => void;
+  onMovePages: () => void;
 }
 
 interface ToolButtonProps {
@@ -99,6 +101,7 @@ export default function Toolbar({
   onRemovePage,
   onSelectAll,
   onUndo,
+  onMovePages,
 }: ToolbarProps) {
   return (
     <div className="bg-toolbar sticky top-[56px] z-40">
@@ -136,6 +139,13 @@ export default function Toolbar({
             disabled={!hasSelection}
             variant="danger"
             dataOcid="toolbar.delete_button"
+          />
+          <ToolButton
+            icon={<ArrowRightLeft className="w-4 h-4" />}
+            label="Move To"
+            onClick={onMovePages}
+            disabled={!hasSelection}
+            dataOcid="toolbar.move_button"
           />
           <ToolButton
             icon={<Undo2 className="w-4 h-4" />}
@@ -214,7 +224,7 @@ export default function Toolbar({
           {/* Merge button */}
           <ToolButton
             icon={<Download className="w-4 h-4" />}
-            label={isMerging ? "Merging..." : "Merge & Save"}
+            label={isMerging ? "Merging..." : "Merge & Download"}
             onClick={onMerge}
             disabled={!hasFiles || isMerging}
             variant="primary"
