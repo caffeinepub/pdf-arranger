@@ -779,6 +779,63 @@ export default function App() {
     toast.success("Pages moved successfully.");
   }
 
+  async function handleInsertBlankPage(fileId: number, afterPageNum: number) {
+    pushUndo(filesData);
+
+    // Create a blank A4 PDF using pdf-lib
+    const blankDoc = await window.PDFLib.PDFDocument.create();
+    blankDoc.addPage([595.28, 841.89]); // A4 dimensions in points
+    const blankBytes = await blankDoc.save();
+    const blankFile = new File([blankBytes], `blank-page-${Date.now()}.pdf`, {
+      type: "application/pdf",
+    });
+
+    // Register in sourceFileRegistry with a unique numeric ID
+    const blankFileId = Math.floor(Date.now() + Math.random() * 1000);
+    sourceFileRegistry.set(blankFileId, blankFile);
+
+    // Assign a virtual page ID
+    const blankPageNum = nextVirtualPageId();
+
+    // Render thumbnail for the blank page
+    let blankThumbnail: string | null = null;
+    try {
+      blankThumbnail = await renderPageThumbnail(blankFile, 1, 0);
+    } catch {
+      blankThumbnail = null;
+    }
+
+    setFilesData((prev) =>
+      prev.map((file) => {
+        if (file.id !== fileId) return file;
+        const posIdx = file.pageOrder.indexOf(afterPageNum);
+        if (posIdx === -1) return file;
+
+        const newPageOrder = [...file.pageOrder];
+        const newRotations = [...file.rotations];
+        const newThumbnails = [...file.thumbnails];
+        const newVirtualPageMap = {
+          ...file.virtualPageMap,
+          [blankPageNum]: { sourceFileId: blankFileId, originalPageNum: 1 },
+        };
+
+        newPageOrder.splice(posIdx + 1, 0, blankPageNum);
+        newRotations.splice(posIdx + 1, 0, 0);
+        newThumbnails.splice(posIdx + 1, 0, blankThumbnail);
+
+        return {
+          ...file,
+          pageOrder: newPageOrder,
+          rotations: newRotations,
+          thumbnails: newThumbnails,
+          virtualPageMap: newVirtualPageMap,
+        };
+      }),
+    );
+
+    toast.success("Blank A4 page inserted.");
+  }
+
   async function handleMerge() {
     if (filesData.length === 0) {
       toast.error("Add at least one PDF to merge.");
@@ -1028,6 +1085,15 @@ export default function App() {
           onSelectAll={handleSelectAllFiles}
           onUndo={handleUndo}
           onMovePages={() => setIsMoveDialogOpen(true)}
+          selectedCount={selectedPages.length}
+          onInsertBlankPage={() => {
+            if (selectedPages.length === 1) {
+              handleInsertBlankPage(
+                selectedPages[0].id,
+                selectedPages[0].pageNum,
+              );
+            }
+          }}
         />
 
         {/* Merge progress bar */}
@@ -1071,6 +1137,7 @@ export default function App() {
                       onRotatePage={handleRotatePageSingle}
                       onRemovePageSingle={handleRemovePageSingle}
                       onDuplicatePage={handleDuplicatePage}
+                      onInsertBlankPage={handleInsertBlankPage}
                     />
                   ))}
                 </div>

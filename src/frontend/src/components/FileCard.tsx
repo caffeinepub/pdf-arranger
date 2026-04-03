@@ -37,6 +37,7 @@ interface FileCardProps {
   ) => void;
   onRemovePageSingle: (fileId: number, pageNum: number) => void;
   onDuplicatePage: (fileId: number, pageNum: number) => void;
+  onInsertBlankPage: (fileId: number, pageNum: number) => void;
 }
 
 export default function FileCard({
@@ -57,6 +58,7 @@ export default function FileCard({
   onRotatePage,
   onRemovePageSingle,
   onDuplicatePage,
+  onInsertBlankPage,
 }: FileCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const isDragOver = useRef(false);
@@ -200,6 +202,7 @@ export default function FileCard({
                   onRotateRight={(fid, pn) => onRotatePage(fid, pn, "right")}
                   onDuplicate={onDuplicatePage}
                   onRemove={onRemovePageSingle}
+                  onInsertBlankPage={onInsertBlankPage}
                 />
               ))}
             </div>

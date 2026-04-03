@@ -10,6 +10,7 @@ import {
   CheckSquare,
   Download,
   FilePlus,
+  FilePlus2,
   HelpCircle,
   Loader2,
   RotateCcw,
@@ -26,6 +27,7 @@ interface ToolbarProps {
   isMerging: boolean;
   outputFilename: string;
   thumbSize: ThumbSize;
+  selectedCount: number;
   onFilenameChange: (v: string) => void;
   onThumbSizeChange: (v: ThumbSize) => void;
   onAddPDF: () => void;
@@ -36,6 +38,7 @@ interface ToolbarProps {
   onSelectAll: () => void;
   onUndo: () => void;
   onMovePages: () => void;
+  onInsertBlankPage: () => void;
 }
 
 interface ToolButtonProps {
@@ -92,6 +95,7 @@ export default function Toolbar({
   isMerging,
   outputFilename,
   thumbSize,
+  selectedCount,
   onFilenameChange,
   onThumbSizeChange,
   onAddPDF,
@@ -102,6 +106,7 @@ export default function Toolbar({
   onSelectAll,
   onUndo,
   onMovePages,
+  onInsertBlankPage,
 }: ToolbarProps) {
   return (
     <div className="bg-toolbar sticky top-[56px] z-40">
@@ -146,6 +151,13 @@ export default function Toolbar({
             onClick={onMovePages}
             disabled={!hasSelection}
             dataOcid="toolbar.move_button"
+          />
+          <ToolButton
+            icon={<FilePlus2 className="w-4 h-4" />}
+            label="Insert Blank"
+            onClick={onInsertBlankPage}
+            disabled={selectedCount !== 1}
+            dataOcid="toolbar.insert_blank.button"
           />
           <ToolButton
             icon={<Undo2 className="w-4 h-4" />}

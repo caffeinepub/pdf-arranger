@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import {
   Check,
   Copy,
+  FilePlus2,
   Loader2,
   RotateCcw,
   RotateCw,
@@ -52,6 +53,7 @@ interface PageThumbProps {
   onRotateRight: (fileId: number, pageNum: number) => void;
   onDuplicate: (fileId: number, pageNum: number) => void;
   onRemove: (fileId: number, pageNum: number) => void;
+  onInsertBlankPage: (fileId: number, pageNum: number) => void;
 }
 
 export default function PageThumb({
@@ -72,6 +74,7 @@ export default function PageThumb({
   onRotateRight,
   onDuplicate,
   onRemove,
+  onInsertBlankPage,
 }: PageThumbProps) {
   const isDragOver = useRef(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -221,6 +224,13 @@ export default function PageThumb({
         >
           <Copy className="w-4 h-4" />
           Duplicate Page
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => onInsertBlankPage(fileId, pageNum)}
+          className="gap-2 cursor-pointer"
+        >
+          <FilePlus2 className="w-4 h-4" />
+          Insert Blank Page After
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem
